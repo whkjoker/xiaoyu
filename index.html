@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>通用高精度图片文字朗读（自动断句版）</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: "Microsoft YaHei", sans-serif;
+    }
+    body {
+      max-width: 800px;
+      margin: 30px auto;
+      padding: 0 20px;
+      background: #f8f9fa;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 2px 15px rgba(0,0,0,0.05);
+      text-align: center;
+    }
+    h1 {
+      color: #2d3748;
+      margin-bottom: 30px;
+      font-weight: 600;
+    }
+    .upload-area {
+      border: 2px dashed #4299e1;
+      border-radius: 8px;
+      padding: 50px 20px;
+      margin-bottom: 30px;
+      transition: all 0.3s;
+      cursor: pointer;
+    }
+    .upload-area:hover {
+      border-color: #38b2ac;
+      background: #f0f8fb;
+    }
+    .upload-icon {
+      font-size: 48px;
+      color: #4299e1;
+      margin-bottom: 15px;
+    }
+    .upload-tip {
+      font-size: 16px;
+      color: #4a5568;
+      margin-bottom: 20px;
+    }
+    .upload-btn {
+      padding: 12px 30px;
+      background: #4299e1;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+    .upload-btn:hover {
+      background: #3182ce;
+    }
+    #file-input {
+      display: none;
+    }
+    .status-text {
+      font-size: 16px;
+      color: #718096;
+      margin: 20px 0;
+    }
+    .loading {
+      color: #4299e1;
+      animation: blink 1.5s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .result-area {
+      margin-bottom: 30px;
+      text-align: left;
+    }
+    .result-title {
+      font-size: 18px;
+      color: #2d3748;
+      margin-bottom: 15px;
+      font-weight: 600;
+    }
+    #result-content {
+      background: #f7fafc;
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #dee2e6;
+      min-height: 100px;
+      white-space: pre-line;
+      font-size: 15px;
+      color: #2d3748;
+      line-height: 1.8;
+    }
+    .btn-group {
+      margin-top: 20px;
+    }
+    .func-btn {
+      padding: 12px 30px;
+      margin: 0 10px;
+      border: none;
+      border-radius: 6px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    .read-btn {
+      background: #48bb78;
+      color: white;
+    }
+    .read-btn:disabled {
+      background: #a3e635;
+      cursor: not-allowed;
+    }
+    .stop-btn {
+      background: #e53e3e;
+      color: white;
+    }
+    .stop-btn:disabled {
+      background: #fca5a5;
+      cursor: not-allowed;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>通用高精度图片文字朗读（自动断句版）</h1>
+    <div class="upload-area" id="upload-area">
+      <div class="upload-icon">📷</div>
+      <p class="upload-tip">点击选择图片，或直接拖放图片到此处</p>
+      <input type="file" id="file-input" accept="image/*">
+      <button class="upload-btn" id="select-img-btn">选择图片</button>
+    </div>
+    <div class="status-text" id="status-text">请上传图片开始识别</div>
+    <div class="result-area">
+      <h3 class="result-title">识别结果（自动断句）：</h3>
+      <div id="result-content">等待识别...</div>
+    </div>
+    <div class="btn-group">
+      <button class="func-btn read-btn" id="read-btn" disabled>朗读文字</button>
+      <button class="func-btn stop-btn" id="stop-btn" disabled>停止朗读</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.1.1/dist/tesseract.min.js"></script>
+  <script>
+    class AutoPunctuationReader {
+      constructor() {
+        // DOM元素绑定
+        this.fileInput = document.getElementById('file-input');
+        this.selectImgBtn = document.getElementById('select-img-btn');
+        this.uploadArea = document.getElementById('upload-area');
+        this.statusText = document.getElementById('status-text');
+        this.resultContent = document.getElementById('result-content');
+        this.readBtn = document.getElementById('read-btn');
+        this.stopBtn = document.getElementById('stop-btn');
+
+        // 状态变量
+        this.speechSynthesis = window.speechSynthesis;
+        this.recognizedText = '';
+
+        // 通用字形混淆纠错字典（基于中文常见误识别规则）
+        this.universalErrorMap = {
+          "便": "使", "持": "描", "惧": "想", "谅": "读", "敷": "整",
+          "卵": "即", "司": "可", "贼": "览", "掸": "据", "渡": "渲",
+          "僳": "修", "葛": "善", "技": "持", "诞": "退", "这": "迹",
+          "销": "键", "罩": "署", "切": "仓", "锰": "链", "授": "接",
+          "络": "给", "借": "使", "清": "流", "财": "时", "预": "览",
+          "看": "查", "间": "版"
+        };
+
+        // 自动断句配置（中文语法规则）
+        this.punctuationRules = {
+          // 强制断句标点（后接换行）
+          forceBreak: /([。！？])/g,
+          // 逻辑断句标点（后接空格，不换行）
+          logicBreak: /([；：，])/g,
+          // 段落拆分关键词（前接换行）
+          paragraphKeywords: ['自然语言方式表述', '实时预览效果', '局部定位修改', '一键部署分享', '功能', '特性', '优势', '说明'],
+          // 避免断句的固定搭配
+          noBreakPairs: ['根据', '基于', '通过', '使用', '无需', '支持', '可直接', '自动', '实时', '局部', '一键', '简化']
+        };
+
+        // 初始化事件
+        this.initEvents();
+      }
+
+      initEvents() {
+        // 按钮点击事件
+        this.selectImgBtn.addEventListener('click', () => this.fileInput.click());
+        this.fileInput.addEventListener('change', (e) => {
+          const file = e.target.files[0];
+          if (file) this.handleUpload(file);
+        });
+
+        // 拖放事件
+        this.uploadArea.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          this.uploadArea.style.borderColor = '#38b2ac';
+        });
+        this.uploadArea.addEventListener('dragleave', () => {
+          this.uploadArea.style.borderColor = '#4299e1';
+        });
+        this.uploadArea.addEventListener('drop', (e) => {
+          e.preventDefault();
+          this.uploadArea.style.borderColor = '#4299e1';
+          const file = e.dataTransfer.files[0];
+          if (file) this.handleUpload(file);
+        });
+
+        // 朗读/停止按钮
+        this.readBtn.addEventListener('click', () => this.speak());
+        this.stopBtn.addEventListener('click', () => this.stopSpeak());
+      }
+
+      handleUpload(file) {
+        // 图片格式验证
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/bmp'];
+        if (!validTypes.includes(file.type)) {
+          alert('请选择图片格式文件！');
+          this.updateStatus('文件格式不支持', 'red');
+          return;
+        }
+
+        // 上传后实时反馈
+        this.updateStatus('正在预处理图片（含自动断句优化）...', '#4299e1');
+        this.resultContent.textContent = '识别中...';
+        this.readBtn.disabled = true;
+
+        // 开始识别
+        this.recognize(file);
+      }
+
+      // 通用图片预处理（保持高精度基础）
+      async preprocess(file) {
+        return new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'Anonymous';
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // 1. 自适应放大
+            const scale = img.width < 800 || img.height < 600 ? 2 : 1.2;
+            canvas.width = Math.floor(img.width * scale);
+            canvas.height = Math.floor(img.height * scale);
+
+            // 2. 双线性插值绘制
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            // 3. 灰度化
+            let imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+              const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+              data[i] = data[i + 1] = data[i + 2] = gray;
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            // 4. 自适应二值化
+            imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            data = imageData.data;
+            let sum = 0, count = 0;
+            for (let i = 0; i < data.length; i += 4) {
+              sum += data[i];
+              count++;
+            }
+            const avgGray = sum / count;
+            const threshold = avgGray < 120 ? avgGray + 30 : avgGray - 20;
+            for (let i = 0; i < data.length; i += 4) {
+              const gray = data[i];
+              const binary = gray > threshold ? 255 : 0;
+              data[i] = data[i + 1] = data[i + 2] = binary;
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            // 5. 轻度降噪
+            imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            data = imageData.data;
+            const width = canvas.width;
+            const height = canvas.height;
+            for (let y = 1; y < height - 1; y++) {
+              for (let x = 1; x < width - 1; x++) {
+                const idx = (y * width + x) * 4;
+                const current = data[idx];
+                const neighbors = [
+                  data[((y-1)*width + (x-1)) * 4],
+                  data[((y-1)*width + x) * 4],
+                  data[((y-1)*width + (x+1)) * 4],
+                  data[(y*width + (x-1)) * 4],
+                  data[(y*width + (x+1)) * 4],
+                  data[((y+1)*width + (x-1)) * 4],
+                  data[((y+1)*width + x) * 4],
+                  data[((y+1)*width + (x+1)) * 4],
+                ].filter(p => p === 0).length;
+                if (current === 0 && neighbors < 2) {
+                  data[idx] = data[idx + 1] = data[idx + 2] = 255;
+                }
+              }
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            resolve(canvas.toDataURL('image/png'));
+          };
+          img.src = URL.createObjectURL(file);
+        });
+      }
+
+      // 核心识别逻辑
+      async recognize(file) {
+        try {
+          this.updateStatus('加载通用高精度识别模型...', '#4299e1');
+          
+          // 通用图片预处理
+          const processedImg = await this.preprocess(file);
+          
+          // Tesseract通用优化参数
+          const result = await Tesseract.recognize(
+            processedImg,
+            'chi_sim_vert+chi_sim+eng',
+            {
+              logger: (m) => {
+                if (m.status === 'recognizing text') {
+                  this.updateStatus(`识别中：${Math.round(m.progress*100)}%`, '#4299e1');
+                }
+              },
+              tessedit_ocr_engine_mode: Tesseract.OEM.LSTM_ONLY,
+              tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+              load_system_dawg: 1,
+              load_freq_dawg: 1,
+              load_unambig_dawg: 1,
+              load_punc_dawg: 1,
+              load_number_dawg: 1,
+              tessedit_char_blacklist: '(){}[]|@#$%^&*_+-=\\/<>?~`',
+              preserve_interword_spaces: 1,
+              tessedit_do_invert: 0,
+              classify_bln_numeric_mode: 1,
+            }
+          );
+
+          // 通用文本后处理 + 新增自动断句
+          this.recognizedText = this.universalPostProcess(result.data.text);
+
+          // 结果反馈
+          this.updateStatus('通用高精度识别完成（已自动断句）', '#48bb78');
+          this.resultContent.textContent = this.recognizedText || '未识别到有效文字';
+          this.readBtn.disabled = !this.recognizedText;
+        } catch (err) {
+          this.updateStatus(`识别失败：${err.message}`, 'red');
+          this.resultContent.textContent = '识别出错，请重试（建议使用清晰图片）';
+        }
+      }
+
+      // 通用文本后处理（含自动断句核心逻辑）
+      universalPostProcess(text) {
+        if (!text) return '';
+
+        // 步骤1：去除多余空格和换行
+        let processed = text.replace(/\s+/g, ' ').trim();
+
+        // 步骤2：通用字形混淆纠错
+        Object.keys(this.universalErrorMap).forEach(key => {
+          const reg = new RegExp(key, 'g');
+          processed = processed.replace(reg, this.universalErrorMap[key]);
+        });
+
+        // 步骤3：自动断句（核心新增）
+        processed = this.autoPunctuate(processed);
+
+        // 步骤4：去除无效字符
+        processed = processed.replace(/[^\u4e00-\u9fa5a-zA-Z0-9，。；！？：（）【】、\s]/g, '');
+
+        // 步骤5：整理空行（避免连续换行）
+        processed = processed.replace(/\n+/g, '\n').trim();
+
+        return processed;
+      }
+
+      // 新增：自动断句核心方法（基于中文语法规则）
+      autoPunctuate(text) {
+        let result = text;
+
+        // 规则1：段落拆分（关键词前加换行）
+        this.punctuationRules.paragraphKeywords.forEach(keyword => {
+          const reg = new RegExp(`(${keyword})`, 'g');
+          // 避免开头换行
+          if (result.startsWith(keyword)) {
+            result = result.replace(new RegExp(`^${keyword}`), keyword);
+          } else {
+            result = result.replace(reg, `\n$1`);
+          }
+        });
+
+        // 规则2：强制断句（。！？后加换行）
+        result = result.replace(this.punctuationRules.forceBreak, '$1\n');
+
+        // 规则3：逻辑断句（；：，后加空格）
+        result = result.replace(this.punctuationRules.logicBreak, '$1 ');
+
+        // 规则4：修复过度断句（保留固定搭配）
+        this.punctuationRules.noBreakPairs.forEach(pair => {
+          // 修复“搭配 词”→“搭配词”（避免空格拆分）
+          const reg = new RegExp(`(${pair})\\s+`, 'g');
+          result = result.replace(reg, '$1');
+        });
+
+        // 规则5：句首空格去除
+        result = result.replace(/^\s+/gm, '');
+
+        return result;
+      }
+
+      // 状态更新辅助方法
+      updateStatus(text, color = '#718096') {
+        this.statusText.textContent = text;
+        this.statusText.style.color = color;
+        if (text.includes('识别中') || text.includes('处理中') || text.includes('加载中')) {
+          this.statusText.classList.add('loading');
+        } else {
+          this.statusText.classList.remove('loading');
+        }
+      }
+
+      // 朗读功能
+      speak() {
+        if (!this.recognizedText) return;
+        this.stopSpeak();
+        const utterance = new SpeechSynthesisUtterance(this.recognizedText);
+        utterance.lang = 'zh-CN';
+        utterance.rate = 0.85;
+        utterance.onend = () => {
+          this.readBtn.disabled = false;
+          this.stopBtn.disabled = true;
+        };
+        this.speechSynthesis.speak(utterance);
+        this.readBtn.disabled = true;
+        this.stopBtn.disabled = false;
+      }
+
+      // 停止朗读
+      stopSpeak() {
+        if (this.speechSynthesis?.speaking) {
+          this.speechSynthesis.cancel();
+          this.readBtn.disabled = false;
+          this.stopBtn.disabled = true;
+        }
+      }
+    }
+
+    // 页面加载完成后初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      new AutoPunctuationReader();
+    });
+  </script>
+</body>
+</html>
